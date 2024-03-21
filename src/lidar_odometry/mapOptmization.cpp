@@ -72,6 +72,7 @@ public:
 
     std::deque<nav_msgs::Odometry> gpsQueue;
     lvi_sam::cloud_info cloudInfo;
+    std::vector<nav_msgs::Odometry> LIO_odom; // hcc
 
     vector<pcl::PointCloud<PointType>::Ptr> cornerCloudKeyFrames;
     vector<pcl::PointCloud<PointType>::Ptr> surfCloudKeyFrames;
@@ -646,7 +647,8 @@ public:
         downSizeFilterICP.filter(*cloud_temp);
         *nearKeyframes = *cloud_temp;
     }
-
+    
+    // 得到闭环的两帧的索引号key_cur key_pre（保存在Poses6D intensity字段中）
     void loopFindKey(const std_msgs::Float64MultiArray &loopMsg,
                      const pcl::PointCloud<PointTypePose>::Ptr &copy_cloudKeyPoses6D,
                      int &key_cur, int &key_pre)
@@ -1589,6 +1591,7 @@ public:
         laserOdometryROS.pose.pose.orientation = tf::createQuaternionMsgFromRollPitchYaw(transformTobeMapped[0], transformTobeMapped[1], transformTobeMapped[2]);
         laserOdometryROS.pose.covariance[0] = double(imuPreintegrationResetId);
         pubOdomAftMappedROS.publish(laserOdometryROS);
+        LIO_odom.push_back(laserOdometryROS); // hcc
         // Publish TF
         static tf::TransformBroadcaster br;
         tf::Transform t_odom_to_lidar = tf::Transform(tf::createQuaternionFromRPY(transformTobeMapped[0], transformTobeMapped[1], transformTobeMapped[2]),
@@ -1655,7 +1658,17 @@ int main(int argc, char **argv)
     ros::init(argc, argv, "lidar");
 
     mapOptimization MO;
-
+    // hcc: begin
+    std::ofstream out_file;
+    std::string file_path = "/home/hcc/ws_LVI_SAM_easyUse/poses.txt";
+    out_file.open(file_path);
+    if (out_file.is_open())
+        ROS_INFO_STREAM(file_path << " is opened.");
+    else {
+        ROS_ERROR("Failed to open the file. Exiting...");
+        return -1;
+    }
+    // hcc: end
     ROS_INFO("\033[1;32m----> Lidar Map Optimization Started.\033[0m");
 
     std::thread loopDetectionthread(&mapOptimization::loopClosureThread, &MO);
@@ -1665,6 +1678,61 @@ int main(int argc, char **argv)
 
     loopDetectionthread.join();
     visualizeMapThread.join();
-
+    
+    // hcc: begin
+    std::cout << "Begin to save poses....\n";
+    if(MO.saveTUM)
+    {
+        int size_pose = MO.globalPath.poses.size();
+        for(int i=0; i < size_pose; ++i)
+        {
+            geometry_msgs::PoseStamped pose_temp;
+            pose_temp = MO.globalPath.poses[i];
+            double time_temp = pose_temp.header.stamp.toSec();
+            out_file << std::fixed << std::setprecision(9) << time_temp << " " 
+                        << pose_temp.pose.position.x << " " 
+                        << pose_temp.pose.position.y << " " 
+                        << pose_temp.pose.position.z << " "
+                        << pose_temp.pose.orientation.x << " "
+                        << pose_temp.pose.orientation.y << " "
+                        << pose_temp.pose.orientation.z << " "
+                        << pose_temp.pose.orientation.w << std::endl;
+        }
+    }
+    else
+    {
+        // save as kitti type
+        int size_pose = MO.LIO_odom.size();
+        for(int i=0; i < size_pose; ++i)
+        {
+            nav_msgs::Odometry pose_temp;
+            pose_temp = MO.LIO_odom[i];
+            Eigen::Quaternionf q(pose_temp.pose.pose.orientation.w, pose_temp.pose.pose.orientation.x, pose_temp.pose.pose.orientation.y, pose_temp.pose.pose.orientation.z);
+            Eigen::Matrix3f rotationMatrix = q.toRotationMatrix();
+            out_file << std::fixed << std::setprecision(9) << rotationMatrix(0,0) << " "<< rotationMatrix(0,1) << " "<< rotationMatrix(0,2) << " " << pose_temp.pose.pose.position.x
+            << " " << rotationMatrix(1,0) << " "<< rotationMatrix(1,1) << " "<< rotationMatrix(1,2) << " " << pose_temp.pose.pose.position.y
+            << " " << rotationMatrix(2,0) << " "<< rotationMatrix(2,1) << " "<< rotationMatrix(2,2) << " " << pose_temp.pose.pose.position.z << std::endl;
+        }
+    }
+    /*
+    // save as tum type
+    for(int i=0; i < size_pose; ++i)
+    {
+        nav_msgs::Odometry pose_temp;
+        pose_temp = MO.LIO_odom[i];
+        double time_temp = pose_temp.header.stamp.toSec();
+        out_file << std::fixed << std::setprecision(9) << time_temp << " " 
+                    << pose_temp.pose.pose.position.x << " " 
+                    << pose_temp.pose.pose.position.y << " " 
+                    << pose_temp.pose.pose.position.z << " "
+                    << pose_temp.pose.pose.orientation.x << " "
+                    << pose_temp.pose.pose.orientation.y << " "
+                    << pose_temp.pose.pose.orientation.z << " "
+                    << pose_temp.pose.pose.orientation.w << std::endl;
+    }
+    */
+    std::cout << "save poses is completed....\n";
+    out_file.close();
+    // hcc: end
     return 0;
 }

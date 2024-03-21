@@ -4,8 +4,10 @@ PROJECT_NAME: "lvi_sam"
 lvi_sam:
 
   # Topics
-  pointCloudTopic: "/points_raw"               # Point cloud data
-  imuTopic: "/imu_raw"                         # IMU data
+  pointCloudTopic: "/kitti/velo/pointcloud"               # Point cloud data
+  imuTopic: "/kitti/oxts/imu"                         # IMU data
+
+  save_as_tum: false                    # save keyFrame pose as TUM if true. or save odom poses as KITTI.
 
   # Heading
   useImuHeadingInitialization: false          # if using GPS data, set to "true"

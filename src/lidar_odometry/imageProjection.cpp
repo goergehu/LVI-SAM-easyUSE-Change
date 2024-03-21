@@ -66,6 +66,8 @@ private:
 
     pcl::PointCloud<PointXYZIRT>::Ptr laserCloudIn;
     pcl::PointCloud<PointType>::Ptr fullCloud;
+    pcl::PointCloud<PointType>::Ptr   fullCloudByRing;
+    pcl::PointCloud<PointType>::Ptr   cloud_by_ring;
     pcl::PointCloud<PointType>::Ptr extractedCloud;
 
     int deskewFlag;
@@ -103,8 +105,11 @@ public:
         laserCloudIn.reset(new pcl::PointCloud<PointXYZIRT>());
         fullCloud.reset(new pcl::PointCloud<PointType>());
         extractedCloud.reset(new pcl::PointCloud<PointType>());
+        fullCloudByRing.reset(new pcl::PointCloud<PointType>());
+        cloud_by_ring.reset(new pcl::PointCloud<PointType>());
 
         fullCloud->points.resize(N_SCAN * Horizon_SCAN);
+        fullCloudByRing->points.resize(N_SCAN*Horizon_SCAN);
 
         cloudInfo.startRingIndex.assign(N_SCAN, 0);
         cloudInfo.endRingIndex.assign(N_SCAN, 0);
@@ -119,6 +124,7 @@ public:
     {
         laserCloudIn->clear();
         extractedCloud->clear();
+        cloud_by_ring->clear();
         // reset range matrix for range image projection
         rangeMat = cv::Mat(N_SCAN, Horizon_SCAN, CV_32F, cv::Scalar::all(FLT_MAX));
 
@@ -186,7 +192,11 @@ public:
 
         // convert cloud
         pcl::fromROSMsg(currentCloudMsg, *laserCloudIn);
-
+        pcl::PointCloud<PointXYZIRT>::Ptr temp_cloud(new pcl::PointCloud<PointXYZIRT>());
+        *temp_cloud = *laserCloudIn;
+        if (laserCloudIn->is_dense == false)
+            removeNaNFromPointCloud(*temp_cloud, *laserCloudIn); // hcc: change
+        
         // check dense flag
         if (laserCloudIn->is_dense == false)
         {
@@ -497,7 +507,9 @@ public:
             float horizonAngle = atan2(thisPoint.x, thisPoint.y) * 180 / M_PI;
 
             static float ang_res_x = 360.0 / float(Horizon_SCAN);
-            int columnIdn = -round((horizonAngle - 90.0) / ang_res_x) + Horizon_SCAN / 2;
+
+            int columnIdn = -round(horizonAngle / ang_res_x) + Horizon_SCAN / 2;  // hcc change
+            // int columnIdn = -round((horizonAngle - 90.0) / ang_res_x) + Horizon_SCAN / 2;
             if (columnIdn >= Horizon_SCAN)
                 columnIdn -= Horizon_SCAN;
 
@@ -505,6 +517,16 @@ public:
                 continue;
 
             float range = pointDistance(thisPoint);
+
+            // hcc:delete car points ? begin
+            if(delete_car_points)
+            {
+                if(horizonAngle > -30 && horizonAngle < 30  && range < 3)
+                    continue;
+                if((horizonAngle > -180 && horizonAngle < -135) && range <1.5 || (horizonAngle > 135 && horizonAngle < 180) && range <1.5)
+                    continue;
+            }
+            // hcc: end
 
             if (range < 1.0)
                 continue;
@@ -524,7 +546,15 @@ public:
             // thisPoint = deskewPoint(&thisPoint, (float)laserCloudIn->points[i].t / 1000000000.0); // Ouster
 
             int index = columnIdn + rowIdn * Horizon_SCAN;
+
+            PointType Point_ring;
+            Point_ring.x = thisPoint.x;
+            Point_ring.y = thisPoint.y;
+            Point_ring.z = thisPoint.z;
+            Point_ring.intensity = rowIdn;
+
             fullCloud->points[index] = thisPoint;
+            fullCloudByRing->points[index] = Point_ring;
         }
     }
 
@@ -546,6 +576,7 @@ public:
                     cloudInfo.pointRange[count] = rangeMat.at<float>(i, j);
                     // save extracted cloud
                     extractedCloud->push_back(fullCloud->points[j + i * Horizon_SCAN]);
+                    cloud_by_ring->push_back(fullCloudByRing->points[j + i*Horizon_SCAN]);
                     // size of extracted cloud
                     ++count;
                 }
@@ -558,7 +589,52 @@ public:
     {
         cloudInfo.header = cloudHeader;
         cloudInfo.cloud_deskewed = publishCloud(&pubExtractedCloud, extractedCloud, cloudHeader.stamp, "base_link");
+        sensor_msgs::PointCloud2 tempCloud;
+        pcl::toROSMsg(*cloud_by_ring, tempCloud);
+        cloudInfo.cloud_by_ring = tempCloud;
         pubLaserCloudInfo.publish(cloudInfo);
+    }
+
+    void removeNaNFromPointCloud (const pcl::PointCloud<PointXYZIRT> &cloud_in, pcl::PointCloud<PointXYZIRT> &cloud_out)
+    {
+        // If the clouds are not the same, prepare the output
+        if (&cloud_in != &cloud_out)
+        {
+            cloud_out.header = cloud_in.header;
+            cloud_out.points.resize (cloud_in.points.size ());
+        }
+
+        size_t j = 0;
+
+        // If the data is dense, we don't need to check for NaN
+        if (cloud_in.is_dense)
+        {
+            // Simply copy the data
+            cloud_out = cloud_in;
+        }
+        else
+        {
+            for (size_t i = 0; i < cloud_in.points.size (); ++i)
+            {
+                if (!pcl_isfinite (cloud_in.points[i].x) || 
+                    !pcl_isfinite (cloud_in.points[i].y) || 
+                    !pcl_isfinite (cloud_in.points[i].z))
+                    continue;
+                cloud_out.points[j] = cloud_in.points[i];
+                j++;
+            }
+            if (j != cloud_in.points.size ())
+            {
+                // Resize to the correct size
+                cloud_out.points.resize (j);
+            }
+
+            cloud_out.height = 1;
+            cloud_out.width  = static_cast<uint32_t>(j);
+
+            // Removing bad points => dense (note: 'dense' doesn't mean 'organized')
+            cloud_out.is_dense = true;
+        }
     }
 };
 

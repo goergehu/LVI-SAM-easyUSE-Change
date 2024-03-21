@@ -30,3 +30,4 @@ int64 odomResetId
 sensor_msgs/PointCloud2 cloud_deskewed  # original cloud deskewed
 sensor_msgs/PointCloud2 cloud_corner    # extracted corner feature
 sensor_msgs/PointCloud2 cloud_surface   # extracted surface feature
+sensor_msgs/PointCloud2 cloud_by_ring   # extracted cloud with ring

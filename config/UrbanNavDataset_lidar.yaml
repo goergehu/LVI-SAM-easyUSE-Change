@@ -10,6 +10,9 @@ lvi_sam:
   # Heading
   useImuHeadingInitialization: false          # if using GPS data, set to "true"
   
+  # hcc: delete car point
+  delete_car_point: true     # delete car points if true, default false
+
   # Export settings
   savePCD: false                              # https://github.com/TixiaoShan/LIO-SAM/issues/3
   savePCDDirectory: "/Downloads/LOAM/"        # in your home folder, starts and ends with "/". Warning: the code deletes "LOAM" folder then recreates it. See "mapOptimization" for implementation
@@ -29,7 +32,7 @@ lvi_sam:
   
   ###################### extrinsic between IMU and LiDAR  ###########################
   ###################### T_IMU_LiDAR, LiDAR -> IMU       ###########################
-  extrinsicTranslation: [0.0, 0.0, 0]    
+  extrinsicTranslation: [0.0, 0.0, -0.28]    
   extrinsicRotation: [ 1,  0,  0, 
                        0,  1,  0, 
                        0,  0,  1]

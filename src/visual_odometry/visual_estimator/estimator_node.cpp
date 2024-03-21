@@ -40,6 +40,8 @@ bool init_feature = 0;
 bool init_imu = 1;
 double last_imu_t = 0;
 
+std::ofstream out_file;
+
 void predict(const sensor_msgs::ImuConstPtr &imu_msg)
 {
     double t = imu_msg->header.stamp.toSec();
@@ -76,6 +78,16 @@ void predict(const sensor_msgs::ImuConstPtr &imu_msg)
 
     acc_0 = linear_acceleration;
     gyr_0 = angular_velocity;
+    /*
+    out_file << std::fixed << std::setprecision(9) << t << " "
+                                                    << tmp_P.x() << " "
+                                                    << tmp_P.y() << " "
+                                                    << tmp_P.z() << " "
+                                                    << tmp_Q.x() << " "
+                                                    << tmp_Q.y() << " "
+                                                    << tmp_Q.z() << " "
+                                                    << tmp_Q.w() << std::endl;
+    */
 }
 
 void update()
@@ -340,10 +352,21 @@ int main(int argc, char **argv)
     if (!USE_LIDAR)
         sub_odom.shutdown();
 
+    // hcc:add
+    std::string file_path = "/home/hcc/ws_LVI_SAM_easyUse/output/estimatorNode_IMU_odom.txt";
+    out_file.open(file_path);
+    if (out_file.is_open())
+        ROS_INFO_STREAM(file_path << " is opened.");
+    else {
+        ROS_ERROR("Failed to open the file. Exiting...");
+        ROS_BREAK();
+    }
+    // hcc:add
     std::thread measurement_process{process};
 
     ros::MultiThreadedSpinner spinner(4);
     spinner.spin();
+    out_file.close();
 
     return 0;
 }

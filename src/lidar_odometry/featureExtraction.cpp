@@ -18,6 +18,8 @@ class FeatureExtraction : public ParamServer
 public:
 
     ros::Subscriber subLaserCloudInfo;
+    ros::Subscriber subOdometry;
+    std::ofstream out_file;  // hcc
 
     ros::Publisher pubLaserCloudInfo;
     ros::Publisher pubCornerPoints;
@@ -37,15 +39,30 @@ public:
     int *cloudNeighborPicked;
     int *cloudLabel;
 
+    std::vector<std::pair<double, double>> time_yaw;
+    std::mutex time_bf;
+
     FeatureExtraction()
     {
         subLaserCloudInfo = nh.subscribe<lvi_sam::cloud_info>(PROJECT_NAME + "/lidar/deskew/cloud_info", 5, &FeatureExtraction::laserCloudInfoHandler, this, ros::TransportHints().tcpNoDelay());
+        subOdometry = nh.subscribe<nav_msgs::Odometry>(PROJECT_NAME + "/lidar/mapping/odometry", 5, &FeatureExtraction::odometryHandler, this, ros::TransportHints().tcpNoDelay());
 
         pubLaserCloudInfo = nh.advertise<lvi_sam::cloud_info> (PROJECT_NAME + "/lidar/feature/cloud_info", 5);
         pubCornerPoints = nh.advertise<sensor_msgs::PointCloud2>(PROJECT_NAME + "/lidar/feature/cloud_corner", 5);
         pubSurfacePoints = nh.advertise<sensor_msgs::PointCloud2>(PROJECT_NAME + "/lidar/feature/cloud_surface", 5);
         
         initializationValue();
+
+        // hcc:add
+        std::string file_path = "/home/hcc/ws_LVI_SAM_easyUse/yaw_data.txt";
+        out_file.open(file_path);
+        if (out_file.is_open())
+            ROS_INFO_STREAM(file_path << " is opened.");
+        else {
+            ROS_ERROR("Failed to open the file. Exiting...");
+            ROS_BREAK();
+        }
+        // hcc:add
     }
 
     void initializationValue()
@@ -61,6 +78,25 @@ public:
         cloudCurvature = new float[N_SCAN*Horizon_SCAN];
         cloudNeighborPicked = new int[N_SCAN*Horizon_SCAN];
         cloudLabel = new int[N_SCAN*Horizon_SCAN];
+    }
+
+    void odometryHandler(const nav_msgs::Odometry::ConstPtr& odomMsg)
+    {
+        time_bf.lock();
+        
+        nav_msgs::Odometry pose_temp = *odomMsg;
+        Eigen::Quaternionf q(pose_temp.pose.pose.orientation.w, pose_temp.pose.pose.orientation.x, pose_temp.pose.pose.orientation.y, pose_temp.pose.pose.orientation.z);
+        Eigen::Matrix3f rotationMatrix = q.toRotationMatrix();
+        // out_file << std::fixed << std::setprecision(9) << rotationMatrix(0,0) << " "<< rotationMatrix(0,1) << " "<< rotationMatrix(0,2) << " " << pose_temp.pose.pose.position.x
+        // << " " << rotationMatrix(1,0) << " "<< rotationMatrix(1,1) << " "<< rotationMatrix(1,2) << " " << pose_temp.pose.pose.position.y
+        // << " " << rotationMatrix(2,0) << " "<< rotationMatrix(2,1) << " "<< rotationMatrix(2,2) << " " << pose_temp.pose.pose.position.z << std::endl;
+        // Eigen::Vector3f euler_angles =  rotationMatrix.eulerAngles(0, 1, 2);
+        double yaw_angle = -atan2(rotationMatrix(1, 0),rotationMatrix(0, 0))*180.0/M_PI;
+        // double yaw_temp = euler_angles[2]*180.0/M_PI;
+        double time_temp = odomMsg->header.stamp.toSec();
+        time_yaw.push_back(std::make_pair(time_temp, yaw_angle));
+        // out_file << std::fixed << std::setprecision(9) << time_temp << " " << yaw_temp << " " << yaw_angle << endl;
+        time_bf.unlock();
     }
 
     void laserCloudInfoHandler(const lvi_sam::cloud_infoConstPtr& msgIn)
@@ -142,19 +178,76 @@ public:
     {
         cornerCloud->clear();
         surfaceCloud->clear();
+        
+        // hcc:begin
+        time_bf.lock();
+        double curtime = cloudHeader.stamp.toSec();
+        bool no_average_flag = false;
+        double cur_yaw, cur_yaw_another;
+        int size_time = time_yaw.size();
+        if (size_time>=2)
+        {
+
+            no_average_flag = true;
+            cur_yaw = time_yaw[size_time-1].second - time_yaw[size_time-2].second + 90.0;
+            if(cur_yaw > 0)
+                cur_yaw_another = cur_yaw - 180.0;
+            else
+                cur_yaw_another = cur_yaw + 180.0;
+        }
+        time_bf.unlock();
+        // hcc:end
 
         pcl::PointCloud<PointType>::Ptr surfaceCloudScan(new pcl::PointCloud<PointType>());
         pcl::PointCloud<PointType>::Ptr surfaceCloudScanDS(new pcl::PointCloud<PointType>());
+
+        int split = 12; // hcc : split number, change this
 
         for (int i = 0; i < N_SCAN; i++)
         {
             surfaceCloudScan->clear();
 
-            for (int j = 0; j < 6; j++)
+            for (int j = 0; j < split; j++)
             {
 
-                int sp = (cloudInfo.startRingIndex[i] * (6 - j) + cloudInfo.endRingIndex[i] * j) / 6;
-                int ep = (cloudInfo.startRingIndex[i] * (5 - j) + cloudInfo.endRingIndex[i] * (j + 1)) / 6 - 1;
+                int sp = (cloudInfo.startRingIndex[i] * (split - j) + cloudInfo.endRingIndex[i] * j) / split;
+                int ep = (cloudInfo.startRingIndex[i] * (split - 1 - j) + cloudInfo.endRingIndex[i] * (j + 1)) / split - 1;
+                //hcc:begin
+                int begin_ind = cloudSmoothness[sp].ind;
+                int end_ind = cloudSmoothness[ep].ind;
+                int init_num = calculatePoints(begin_ind, end_ind);
+                /*
+                int init_num = 10;
+                
+                int begin_ind = cloudSmoothness[sp].ind;
+                int end_ind = cloudSmoothness[ep].ind;
+                
+                PointType begin_Point = extractedCloud->points[begin_ind];
+                PointType end_Point =  extractedCloud->points[end_ind];
+
+                float begin_yaw = atan2(begin_Point.y, begin_Point.x) * 180.0 / M_PI;
+                float end_yaw = atan2(end_Point.y, end_Point.x) * 180.0 / M_PI;
+                float diff_yaw = abs(begin_yaw - end_yaw);
+                float min_yaw, max_yaw;
+                min_yaw = min(begin_yaw, end_yaw);
+                max_yaw = max(begin_yaw, end_yaw);
+                if (diff_yaw > 180.0)
+                {
+                    min_yaw += 180.0;
+                    float temp = max_yaw;
+                    max_yaw = min_yaw;
+                    min_yaw = temp - 180.0; 
+                }
+                if (no_average_flag)
+                {
+                    if((min_yaw < cur_yaw && max_yaw > cur_yaw) || (min_yaw < cur_yaw_another && max_yaw > cur_yaw_another))
+                    {
+                        init_num = 15;
+                    }
+                    // out_file << fixed << setprecision(6) << "cur_yaw, begin_yaw, end_yaw" << cur_yaw << " " << begin_yaw << " " << end_yaw << endl;
+                }
+                */
+                // hcc:end
 
                 if (sp >= ep)
                     continue;
@@ -168,7 +261,7 @@ public:
                     if (cloudNeighborPicked[ind] == 0 && cloudCurvature[ind] > edgeThreshold)
                     {
                         largestPickedNum++;
-                        if (largestPickedNum <= 20){
+                        if (largestPickedNum <= init_num){
                             cloudLabel[ind] = 1;
                             cornerCloud->push_back(extractedCloud->points[ind]);
                         } else {
@@ -259,6 +352,31 @@ public:
         // publish to mapOptimization
         pubLaserCloudInfo.publish(cloudInfo);
     }
+
+    int calculatePoints(int sp, int ep)
+    {
+        map<int, int> map_temp;
+        PointType first_point = extractedCloud->points[sp];
+        Eigen::Vector3d vec_a(first_point.x, first_point.y, first_point.z);
+        for(int i=sp+1;i<ep;i++)
+        {
+            PointType cur_point = extractedCloud->points[i];
+            Eigen::Vector3d vec_b(cur_point.x-first_point.x, cur_point.y-first_point.y, cur_point.z-first_point.z);
+            
+            double dot_product = vec_a.dot(vec_b);
+
+            double norm_a = vec_a.norm();
+            double norm_b = vec_b.norm();
+
+            double angle_rad = acos(dot_product / (norm_a * norm_b));
+
+            double angle_deg = angle_rad * 180.0 / M_PI;
+            int angle_dif = static_cast<int>(angle_deg / 5);
+            if(map_temp.find(angle_dif)==map_temp.end())
+                map_temp[angle_dif] = 1;
+        }
+        return min(max(static_cast<int>(map_temp.size())-1, 0), 20);
+    }
 };
 
 
@@ -271,6 +389,7 @@ int main(int argc, char** argv)
     ROS_INFO("\033[1;32m----> Lidar Feature Extraction Started.\033[0m");
    
     ros::spin();
+    FE.out_file.close();
 
     return 0;
 }

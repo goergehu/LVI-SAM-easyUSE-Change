@@ -34,6 +34,8 @@ public:
     // odom -> base_link
     tf::TransformBroadcaster tfOdom2BaseLink;
 
+    ofstream out_file;
+
     bool systemInitialized = false;
 
     gtsam::noiseModel::Diagonal::shared_ptr priorPoseNoise;
@@ -111,6 +113,17 @@ public:
 
         imuIntegratorImu_ = new gtsam::PreintegratedImuMeasurements(p, prior_imu_bias); // setting up the IMU integration for IMU message thread
         imuIntegratorOpt_ = new gtsam::PreintegratedImuMeasurements(p, prior_imu_bias); // setting up the IMU integration for optimization
+
+        // hcc:add
+        std::string file_path = "/home/hcc/ws_LVI_SAM_easyUse/output/imuPreintegration_IMU_odom.txt";
+        out_file.open(file_path);
+        if (out_file.is_open())
+            ROS_INFO_STREAM(file_path << " is opened.");
+        else {
+            ROS_ERROR("Failed to open the file. Exiting...");
+            ROS_BREAK();
+        }
+        // hcc:add
     }
 
     void resetOptimization()
@@ -428,6 +441,17 @@ public:
         tf::poseMsgToTF(odometry.pose.pose, tCur);
         tf::StampedTransform odom_2_baselink = tf::StampedTransform(tCur, thisImu.header.stamp, "odom", "base_link");
         tfOdom2BaseLink.sendTransform(odom_2_baselink);
+        
+        /*
+        out_file << fixed << setprecision(9) << odometry.header.stamp.toSec() << " " 
+                                            << odometry.pose.pose.position.x << " "
+                                            << odometry.pose.pose.position.y << " "
+                                            << odometry.pose.pose.position.z << " "
+                                            << odometry.pose.pose.orientation.x << " "
+                                            << odometry.pose.pose.orientation.y << " "
+                                            << odometry.pose.pose.orientation.z << " "
+                                            << odometry.pose.pose.orientation.w << endl;
+        */
     }
 };
 
@@ -440,6 +464,7 @@ int main(int argc, char **argv)
     ROS_INFO("\033[1;32m----> Lidar IMU Preintegration Started.\033[0m");
 
     ros::spin();
+    ImuP.out_file.close();
 
     return 0;
 }

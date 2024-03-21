@@ -80,6 +80,11 @@ public:
     bool useGpsElevation;
     float gpsCovThreshold;
     float poseCovThreshold;
+    
+    // hcc: save pose format
+    bool saveTUM;
+    bool delete_car_points;
+
 
     // Save pcd
     bool savePCD;
@@ -170,6 +175,8 @@ public:
         nh.param<float>(PROJECT_NAME + "/gpsCovThreshold", gpsCovThreshold, 2.0);
         nh.param<float>(PROJECT_NAME + "/poseCovThreshold", poseCovThreshold, 25.0);
 
+        nh.param<bool>(PROJECT_NAME + "/save_as_tum", saveTUM, true);  // hcc
+        nh.param<bool>(PROJECT_NAME + "/delete_car_point", delete_car_points, false);  // hcc
         nh.param<bool>(PROJECT_NAME + "/savePCD", savePCD, false);
         nh.param<std::string>(PROJECT_NAME + "/savePCDDirectory", savePCDDirectory, "/tmp/loam/");
 
